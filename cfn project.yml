@@ -1,0 +1,345 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: This is Cloudformation Project
+#Metadata: 
+
+Parameters: 
+  CFNCidr:
+    Description: Enter the CidrBlock for your VPC
+    Type: String
+    Default: 10.0.0.0/16
+  SubnetACidr:
+    Description: Enter the CidrBlock for your Public Subnet A 
+    Type: String
+    Default: 10.0.1.0/24
+  AZforSubnetA:
+    Description: Select AvailabilityZone for your Subnet A
+    Type: AWS::EC2::AvailabilityZone::Name
+  SubnetBCidr:
+    Description: Enter the CidrBlock for your Public Subnet B 
+    Type: String
+    Default: 10.0.2.0/24
+  AZforSubnetB:
+    Description: Select AvailabilityZone for your Subnet B
+    Type: AWS::EC2::AvailabilityZone::Name
+
+  ListofSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of Subnet's you are currently using for Webserver
+
+
+  EC2Key:
+    Description: Enter the name of your existing EC2 KeyPair 
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: pubec2
+  CFNWebServerA:
+    Description: WebServer for Public Subnet A 
+    Type: String
+    Default: t2.micro
+    AllowedValues: [t2.nano, t2.micro, t2.medium]
+  IPforSSHAccess:
+    Description: Enter the IP address range for SSH Access to EC2
+    Type: String
+    Default: 0.0.0.0/0
+    ConstraintDescription: Must be a valid IP range.
+  
+Mappings:
+  AWSInstanceType2Arch: #used to verify if instance type is valid
+    t2.micro:
+      Arch: HVM64
+    t2.nano:
+      Arch: HVM64
+    t2.medium:
+      Arch: HVM64
+  AWSRegionArch2AMI:
+    us-east-1:
+      HVM64: ami-0bcf96da72815f8d4 #custom AMI for preloaded webserver which was created from previous project in US east 1
+#Conditions: 
+
+
+Resources: 
+ CFNVPC:
+  Type: AWS::EC2::VPC
+  Properties:
+    CidrBlock: 
+      Ref: CFNCidr
+    EnableDnsSupport: true
+    EnableDnsHostnames: true
+    Tags:
+      - Key: Name
+        Value: CloudformationVPC
+ CFNInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Cloudformation Internet Gateway
+
+ AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: 
+       Ref: CFNVPC
+      InternetGatewayId:
+       Ref: CFNInternetGateway
+
+ PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: 
+       Ref: CFNVPC
+      Tags:
+        - Key: Name
+          Value: Public Route Table
+
+ PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: CFNInternetGateway
+    Properties:
+      RouteTableId: 
+        Ref: PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: 
+        Ref: CFNInternetGateway
+
+ #PublicSubnets
+ PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Ref: AZforSubnetA
+      VpcId:
+       Ref: CFNVPC
+      CidrBlock:
+       Ref: SubnetACidr
+      Tags:
+        - Key: Name
+          Value: CFNPublicSubnet-A
+ routeTableAssocforPublicSubnetsA:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId:
+          Ref: PublicSubnetA
+        RouteTableId: 
+          Ref: PublicRouteTable
+ PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+       Ref: AZforSubnetB
+      VpcId:
+       Ref: CFNVPC
+      CidrBlock:
+       Ref: SubnetBCidr
+      Tags:
+        - Key: Name
+          Value: CFNPublicSubnet-B
+ routeTableAssocforPublicSubnetB:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId:
+          Ref: PublicSubnetB
+        RouteTableId: 
+          Ref: PublicRouteTable
+#NETWORK ACL
+ NetworkAcl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: 
+        Ref: CFNVPC
+      Tags:
+        - Key: Name
+          Value: Network ACL for Public Server A & B
+ InboundSSHNetworkAclEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+        NetworkAclId:
+            Ref: NetworkAcl
+        RuleNumber: 100
+        Protocol: 6
+        RuleAction: allow
+        Egress: false
+        CidrBlock:
+          Ref: IPforSSHAccess
+        PortRange:
+          From: 22
+          To: 22
+ OutBoundResponsePortsNetworkAclEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+        NetworkAclId:
+          Ref: NetworkAcl
+        RuleNumber: 101
+        Protocol: 6
+        RuleAction: allow
+        Egress: true
+        CidrBlock: 0.0.0.0/0
+        PortRange:
+          From: 1024
+          To: 65535
+ InboundHTTPNetworkAclEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+        NetworkAclId:
+            Ref: NetworkAcl
+        RuleNumber: 102
+        Protocol: 6
+        Egress: false
+        RuleAction: allow
+        CidrBlock: 0.0.0.0/0
+        PortRange:
+          From: 80
+          To: 80
+ OutBoundHTTPNetworkAclEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+        NetworkAclId:
+          Ref: NetworkAcl
+        RuleNumber: 103
+        Protocol: 6
+        RuleAction: allow
+        Egress: true
+        CidrBlock: 0.0.0.0/0
+        PortRange:
+          From: 80
+          To: 80
+ SubnetNetworkAclAssociation1:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId:
+         Ref: 
+            PublicSubnetA
+      NetworkAclId:
+          Ref: NetworkAcl
+ SubnetNetworkAclAssociation2:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId:
+         Ref: 
+            PublicSubnetB
+      NetworkAclId:
+        Ref: NetworkAcl
+#SECURITY GROUP AND WEBSERVER 1
+ CFNSGWS1:
+   Type: AWS::EC2::SecurityGroup
+   Properties:
+     GroupDescription: This is SG for WebServer 1
+     VpcId:
+        Ref: CFNVPC
+     SecurityGroupIngress:
+       - IpProtocol: tcp
+         FromPort: 22
+         ToPort: 22
+         CidrIp:
+          Ref: IPforSSHAccess
+       - IpProtocol: tcp
+         FromPort: 80
+         ToPort: 80
+         #CidrIp: 0.0.0.0/0
+         SourceSecurityGroupId:
+            Ref: CFNALBSG
+          #- 0
+          #- !GetAtt
+          #  - ApplicationLoadBalancer
+          #  - SecurityGroups
+     Tags:
+       - Key: Name
+         Value: CFNSG for WebServer 1
+ 
+ LaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      AssociatePublicIpAddress: true
+      ImageId: 
+        Fn::FindInMap:
+        - AWSRegionArch2AMI
+        - Ref: AWS::Region
+        - Fn::FindInMap:
+          - AWSInstanceType2Arch
+          - Ref: CFNWebServerA
+          - Arch 
+      SecurityGroups:
+          - Ref: CFNSGWS1
+      InstanceType:
+          Ref: CFNWebServerA
+      KeyName:
+          Ref: EC2Key
+
+
+ CFNALBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+        GroupDescription: Enable HTTP Access on Port 80
+        VpcId:
+          Ref: CFNVPC
+        SecurityGroupIngress:
+         - IpProtocol: tcp
+           FromPort: 80
+           ToPort: 80
+           CidrIp: 0.0.0.0/0
+
+
+
+
+ ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+        SecurityGroups:
+          - Ref: CFNALBSG
+        Subnets:
+            Ref:
+              ListofSubnets
+  
+ ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+        DefaultActions:
+          - Type: forward
+            TargetGroupArn:
+                Ref: ALBTargetGroup
+        LoadBalancerArn:
+            Ref: ApplicationLoadBalancer
+        Port: 80
+        Protocol: HTTP
+ 
+ ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+        HealthCheckIntervalSeconds: 90
+        HealthCheckTimeoutSeconds: 60
+        HealthyThresholdCount: 3
+        Port: 80
+        Protocol: HTTP
+        UnhealthyThresholdCount: 5
+        VpcId:
+           Ref: CFNVPC
+
+ WebServerAG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+        VPCZoneIdentifier:
+            Ref: ListofSubnets
+        LaunchConfigurationName:
+            Ref: LaunchConfig
+        MinSize: 2
+        MaxSize: 4
+        TargetGroupARNs:
+            - Ref: ALBTargetGroup
+    #CreationPolicy:
+    #    ResourceSignal:
+    #      Timeout: PT10M
+    UpdatePolicy:
+        AutoScalingRollingUpdate:
+            MinInstancesInService: 1
+            MaxBatchSize: 1
+            PauseTime: PT15M
+            #WaitOnResourcesSignals: true
+
+Outputs:
+    URL:
+      Description: URL of the Portal
+      Value: !Join
+        - ''
+        - - 'http://'
+          - !GetAtt
+            - ApplicationLoadBalancer
+            - DNSName
